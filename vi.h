@@ -364,6 +364,7 @@ struct buf {
 	int plen, row, off, top;
 	long mtime;			/* modification time */
 	signed char td;			/* text direction */
+	char readonly;			/* read only */
 };
 extern int xbufcur;
 extern struct buf *ex_buf;
@@ -468,6 +469,7 @@ void vi_regput(int c, const char *s, int ln);
 /* file system */
 void dir_calc(char *path);
 /* global variables */
+extern int stdin_fd;
 extern int xrow;
 extern int xoff;
 extern int xtop;
@@ -503,3 +505,4 @@ extern char *fs_exdir;
 extern int vi_hidch;
 extern int vi_insmov;
 extern int vi_lncol;
+extern char readonly;

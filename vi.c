@@ -2,7 +2,7 @@
  * NEXTVI Editor
  *
  * Copyright (C) 2015-2019 Ali Gholami Rudi <ali at rudi dot ir>
- * Copyright (C) 2020-2024 Kyryl Melekhin <k dot melekhin at gmail dot com>
+ * Copyright (C) 2020-2025 Kyryl Melekhin <k dot melekhin at gmail dot com>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -272,30 +272,26 @@ static void vi_wait(void)
 	xmpt = xmpt > 0 ? 0 : xmpt;
 }
 
-static char *vi_prompt(char *msg, char *insert, int *kmap)
+static char *vi_prompt(char *msg, char *insert, int *kmap, int *mlen)
 {
-	char *r, *s;
+	char *s;
 	term_pos(xrows, led_pos(msg, 0));
 	vi_lncol = 0;
 	syn_setft("/-");
 	s = led_prompt(msg, "", insert, kmap);
 	syn_setft(ex_ft);
 	vi_mod |= 1;
+	*mlen = s ? strlen(msg) : 0;
 	if (!s)
 		return NULL;
-	unsigned int mlen = strlen(msg);
-	r = uc_dup(s + mlen);
-	strncpy(vi_msg, msg, sizeof(vi_msg) - 1);
-	mlen = MIN(mlen, sizeof(vi_msg) - 1);
-	strncpy(vi_msg + mlen, r, sizeof(vi_msg) - mlen - 1);
-	free(s);
-	return r;
+	strncpy(vi_msg, s, sizeof(vi_msg) - 1);
+	return s;
 }
 
-static char *vi_enprompt(char *msg, char *insert)
+static char *vi_enprompt(char *msg, char *insert, int *mlen)
 {
 	int kmap = 0;
-	return vi_prompt(msg, insert, &kmap);
+	return vi_prompt(msg, insert, &kmap, mlen);
 }
 
 /* read an ex input line */
@@ -413,10 +409,10 @@ static int vi_search(int cmd, int cnt, int *row, int *off, int msg)
 	int i, dir;
 	if (cmd == '/' || cmd == '?') {
 		char sign[4] = {cmd};
-		char *kw = vi_prompt(sign, NULL, &xkmap);
+		char *kw = vi_prompt(sign, NULL, &xkmap, &i);
 		if (!kw)
 			return 1;
-		ex_krsset(kw, cmd == '/' ? +2 : -2);
+		ex_krsset(kw + i, cmd == '/' ? +2 : -2);
 		free(kw);
 	} else if (msg)
 		ex_krsset(xregs['/'], xkwddir);
@@ -1059,14 +1055,14 @@ static void vi_pipe(int r1, int r2)
 {
 	char region[100];
 	char *p = itoa(r1+1, region);
+	int mlen;
 	*p++ = ',';
 	p = itoa(r2+1, p);
 	*p++ = '!';
 	*p = '\0';
-	char *cmd = vi_enprompt(":", region);
-	if (!cmd)
-		return;
-	ex_command(cmd)
+	char *cmd = vi_enprompt(":", region, &mlen);
+	if (cmd)
+		ex_command(cmd + mlen)
 	free(cmd);
 }
 
@@ -1297,7 +1293,7 @@ static int vc_replace(void)
 	return cs[0] == '\n' ? 1 : 2;
 }
 
-static char rep_cmd[4096];	/* the last command */
+static char rep_cmd[sizeof(icmd)];	/* the last command */
 static int rep_len;
 
 static void vc_repeat(void)
@@ -1388,12 +1384,12 @@ void vi(int init)
 			xoff = noff;
 			switch (mv) {
 			case 1: /* ^a */
+				if (xrow < otop + xrows - 1)
+					break;
 			case '/':
 			case '?':
 			case 'n':
 			case 'N':
-				if (mv == 1 && xrow < otop + xrows - 1)
-					break;
 				xtop = MAX(0, xrow - xrows / 2);
 				vi_mod |= 1;
 				break;
@@ -1571,19 +1567,19 @@ void vi(int init)
 						strcpy(restr, "%s/^ {");
 						strcpy(itoa(vi_arg1, restr+6), "}/\t/g");
 					}
-					ln = vi_enprompt(":", restr);
+					ln = vi_enprompt(":", restr, &n);
 					goto do_excmd;
 				case 'b':
 				case 'v':
 					term_push(k == 'v' ? ":\x01" : ":\x02", 2); /* ^a : ^b */
 					break;
 				case ';':
-					ln = vi_enprompt(":", "!");
+					ln = vi_enprompt(":", "!", &n);
 					goto do_excmd;
 				case '/':
 					cs = vi_curword(xb, xrow, xoff, vi_arg1);
-					ln = vi_prompt("v/ xkwd:", cs, &xkmap);
-					ex_krsset(ln, +1);
+					ln = vi_prompt("v/ xkwd:", cs, &xkmap, &n);
+					ex_krsset(ln + n, +1);
 					free(ln);
 					free(cs);
 					break;
@@ -1600,7 +1596,7 @@ void vi(int init)
 						strcat(buf1, "/");
 						free(cs);
 					}
-					ln = vi_enprompt(":", buf);
+					ln = vi_enprompt(":", buf, &n);
 					goto do_excmd; }
 				case 'r': {
 					cs = vi_curword(xb, xrow, xoff, vi_arg1);
@@ -1611,7 +1607,7 @@ void vi(int init)
 						strcat(buf, "/");
 						free(cs);
 					}
-					ln = vi_enprompt(":", buf);
+					ln = vi_enprompt(":", buf, &n);
 					goto do_excmd; }
 				default:
 					term_dec()
@@ -1632,10 +1628,10 @@ void vi(int init)
 				vi_mod |= 1;
 				break;
 			case ':':
-				ln = vi_enprompt(":", 0);
+				ln = vi_enprompt(":", 0, &n);
 				do_excmd:
-				if (ln && ln[0])
-					ex_command(ln)
+				if (ln && ln[n])
+					ex_command(ln + n)
 				free(ln);
 				break;
 			case 'q':
@@ -1878,10 +1874,8 @@ void vi(int init)
 			}
 			if (strchr("!<>AIJKOPRacdiopry", c)) {
 				rep:
-				if (icmd_pos < sizeof(rep_cmd)) {
-					memcpy(rep_cmd, icmd, icmd_pos);
-					rep_len = icmd_pos;
-				}
+				memcpy(rep_cmd, icmd, icmd_pos);
+				rep_len = icmd_pos;
 			}
 		}
 		if (xrow < 0 || xrow >= lbuf_len(xb))
@@ -2039,6 +2033,7 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
+	ibuf = emalloc(ibuf_sz);
 	term_init();
 	ex_init(argv + i, argc - i, ex_cmds, cmdnum);
 	if (xvis & 4)

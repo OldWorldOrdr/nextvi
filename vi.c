@@ -570,64 +570,59 @@ char *fs_exdir;
 static int fspos;
 static int fsdir;
 
-static char *file_calc(char *path)
-{
-	struct dirent *dp;
-	struct stat statbuf;
-	int len;
-	DIR *dir = opendir(path);
-	int pathlen = strlen(path);
-	if (!dir)
-		return path + pathlen;
-	while ((dp = readdir(dir)) != NULL) {
-		len = strlen(dp->d_name)+1;
-		path[pathlen] = '/';
-		memcpy(&path[pathlen+1], dp->d_name, len);
-		if (fsincl && rset_find(fsincl, path, NULL, 0) < 0)
-			continue;
-		if (lstat(path, &statbuf) >= 0 && S_ISREG(statbuf.st_mode))
-			temp_write(1, path);
-	}
-	closedir(dir);
-	path[pathlen] = '/';
-	path[pathlen+1] = '\0';
-	return path + pathlen + 1;
-}
-
 void dir_calc(char *path)
 {
 	struct dirent *dirp;
 	struct stat statbuf;
-	char *ptr;
-	int i = 0;
-	char cur_dir[4096];
-	char *ptrs[1024];
-	DIR *dps[1024];
-	DIR *dp;
-	strcpy(cur_dir, path);
+	int i = 0, ret;
+	char *cpath, *ptrs[1024];
+	int plen[1024];
+	DIR *dp, *sdp, *dps[1024];
+	unsigned int pathlen = strlen(path), len;
+	cpath = emalloc(pathlen + 1024);
+	strcpy(cpath, path);
+	if (!(dp = opendir(cpath)))
+		return;
+	sbuf_smake(sb, 1024)
 	temp_pos(1, -1, 0, 0);
 	fspos = 0;
-	goto start;
-	while (i > 0) {
-		while ((dirp = readdir(dp)) != NULL) {
+	for (;;) {
+		while ((dirp = readdir(dp))) {
+			len = strlen(dirp->d_name)+1;
 			if (strcmp(dirp->d_name, ".") == 0 ||
-				strcmp(dirp->d_name, "..") == 0)
+				strcmp(dirp->d_name, "..") == 0 ||
+				len > 1023)
 				continue;
-			strcpy(ptr, dirp->d_name);
-			if (lstat(cur_dir, &statbuf) >= 0 &&
-					S_ISDIR(statbuf.st_mode)) {
-				start:
-				ptr = file_calc(cur_dir);
-				if ((dp = opendir(cur_dir)) == NULL)
-					return;
-				dps[++i] = dp;
-				ptrs[i] = ptr;
-			}
+			cpath[pathlen] = '/';
+			memcpy(&cpath[pathlen+1], dirp->d_name, len);
+			ret = lstat(cpath, &statbuf);
+			if (ret >= 0 && S_ISDIR(statbuf.st_mode)) {
+				if (!(sdp = opendir(cpath)) || i >= LEN(ptrs))
+					break;
+				dps[i] = sdp;
+				ptrs[i] = cpath;
+				cpath = emalloc(pathlen + 1024);
+				memcpy(cpath, ptrs[i], pathlen + len);
+				plen[i++] = pathlen + len;
+			} else if (ret >= 0 && S_ISREG(statbuf.st_mode))
+				if (!fsincl || rset_find(fsincl, cpath, NULL, 0) >= 0) {
+					sbuf_mem(sb, cpath, (int)(pathlen + len))
+					sbuf_chr(sb, '\n')
+				}
 		}
 		closedir(dp);
-		dp = dps[--i];
-		ptr = ptrs[i];
+		free(cpath);
+		if (i > 0) {
+			dp = dps[--i];
+			pathlen = plen[i];
+			cpath = ptrs[i];
+		} else
+			break;
 	}
+	sbuf_null(sb)
+	if (sb->s_n > 1)
+		temp_write(1, sb->s);
+	free(sb->s);
 }
 
 #define fssearch() \
